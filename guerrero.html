@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>POO: Motor 2D y Simulación de Disparos</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; background: #2b2d42; color: white; margin-top: 20px;}
+        canvas { background: #edf2f4; border: 4px solid #8d99ae; border-radius: 8px; box-shadow: 0 8px 16px rgba(0,0,0,0.5); }
+        .controles { margin-top: 20px; display: flex; gap: 15px; }
+        button { padding: 12px 20px; cursor: pointer; border: none; border-radius: 6px; background: #ef233c; color: white; font-weight: bold; font-size: 14px; transition: background 0.2s; }
+        button:hover { background: #d90429; }
+        #info-hud { margin-top: 15px; font-family: monospace; font-size: 16px; color: #8d99ae; }
+    </style>
+</head>
+<body>
+
+<script>
+// ============================================
+// CORE: CLASE BASE (HERENCIA)
+// ============================================
+class EntidadJuego {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.activa = true; // Si es false, el motor la eliminará
+    }
+
+    // Método "virtual" a ser sobreescrito (Polimorfismo)
+    actualizar(dt) {}
+    dibujar(ctx) {}
+}
+
+// ============================================
+// DOMINIO: PROYECTIL
+// ============================================
+class Proyectil extends EntidadJuego {
+    constructor(x, y, velocidad, color, ancho, alto) {
+        super(x, y);
+        this.velocidad = velocidad;
+        this.color = color;
+        this.ancho = ancho;
+        this.alto = alto;
+    }
+
+    actualizar(dt) {
+        // Movimiento rectilíneo uniforme basado en el tiempo
+        this.x += this.velocidad * dt;
+
+        // Si sale de los límites lógicos de una pantalla típica, se desactiva
+        if (this.x > 800) {
+            this.activa = false; 
+        }
+    }
+
+    dibujar(ctx) {
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        // Dibujamos un proyectil con forma ovalada o rectangular redondeada
+        ctx.roundRect(this.x, this.y, this.ancho, this.alto, 5);
+        ctx.fill();
+        
+        // Efecto de brillo/estela
+        ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+        ctx.fillRect(this.x, this.y + 2, this.ancho / 2, this.alto - 4);
+    }
+}
+
+// ============================================
+// DOMINIO: ARMA (Fábrica de Proyectiles)
+// ============================================
+class Arma {
+    constructor(nombre, danio, colorProyectil, velProyectil, escala) {
+        this.nombre = nombre;
+        this.danio = danio;
+        this.colorProyectil = colorProyectil;
+        this.velProyectil = velProyectil;
+        this.escala = escala;
+    }
+
+    obtenerNombre() {
+        return this.nombre;
+    }
+
+    obtenerColor() {
+        return this.colorProyectil;
+    }
+
+    // El arma actúa como una "Fábrica" que crea proyectiles
+    crearProyectil(x, y) {
+        return new Proyectil(
+            x, 
+            y, 
+            this.velProyectil, 
+            this.colorProyectil, 
+            20 * this.escala, 
+            8 * this.escala
+        );
+    }
+}
+
+// ============================================
+// DOMINIO: PERSONAJE
+// ============================================
+class Personaje extends EntidadJuego {
+    constructor(nombre, x, y, armaInicial) {
+        super(x, y);
+        this.nombre = nombre;
+        this.arma = armaInicial;
+        this.tiempoAnimacion = 0; // Para la animación de respiración
+    }
+
+    cambiarArma(nuevaArma) {
+        this.arma = nuevaArma;
+    }
+
+    atacar() {
+        // El personaje delega la creación del proyectil a su arma.
+        // Calcula la posición de salida (punta del arma)
+        const puntoSalidaX = this.x + 60;
+        const puntoSalidaY = this.y + 20; // Ajuste por la animación "respirando" (aproximado)
+        
+        return this.arma.crearProyectil(puntoSalidaX, puntoSalidaY);
+    }
+
+    actualizar(dt) {
+        // Animación inactiva (Idle animation): efecto de flotación o respiración usando Seno
+        this.tiempoAnimacion += dt * 3;
+    }
+
+    dibujar(ctx) {
+        // Calculamos un ligero desplazamiento Y constante para animarlo
+        const offsetY = Math.sin(this.tiempoAnimacion) * 5;
+
+        // Dibujar cuerpo
+        ctx.fillStyle = "#8d99ae";
+        ctx.fillRect(this.x, this.y + offsetY, 50, 50);
+
+        // Ojo
+        ctx.fillStyle = "#2b2d42";
+        ctx.fillRect(this.x + 30, this.y + 10 + offsetY, 10, 10);
+        
+        // Brillo del ojo
+        ctx.fillStyle = "white";
+        ctx.fillRect(this.x + 35, this.y + 12 + offsetY, 3, 3);
+
+        // Arma equipada (representación visual)
+        ctx.fillStyle = this.arma.obtenerColor();
+        ctx.fillRect(this.x + 20, this.y + 25 + offsetY, 45, 10);
+    }
+}
+
+// ============================================
+// MOTOR GRÁFICO Y SIMULACIÓN (Gestor Principal)
+// ============================================
+class MotorJuego {
+    constructor(ancho, alto) {
+        this.entidades = [];
+        this.ultimoTiempo = 0;
+        
+        this.construirDOM(ancho, alto);
+        this.iniciar();
+    }
+
+    construirDOM(ancho, alto) {
+        this.contenedor = document.createElement('div');
+        
+        // Configuración del Canvas
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = ancho;
+        this.canvas.height = alto;
+        this.ctx = this.canvas.getContext('2d');
+
+        // Panel de controles e info
+        const panelUI = document.createElement('div');
+        panelUI.className = 'controles';
+
+        this.btnAtacar = document.createElement('button');
+        this.btnAtacar.textContent = '🔫 Disparar';
+        
+        this.btnCambiarArma = document.createElement('button');
+        this.btnCambiarArma.textContent = '🔄 Cambiar Arma';
+
+        this.hudTexto = document.createElement('div');
+        this.hudTexto.id = 'info-hud';
+
+        panelUI.appendChild(this.btnAtacar);
+        panelUI.appendChild(this.btnCambiarArma);
+        
+        this.contenedor.appendChild(this.canvas);
+        this.contenedor.appendChild(panelUI);
+        this.contenedor.appendChild(this.hudTexto);
+        document.body.appendChild(this.contenedor);
+    }
+
+    agregarEntidad(entidad) {
+        this.entidades.push(entidad);
+    }
+
+    actualizarHUD(texto) {
+        // Única excepción donde modificamos texto plano directamente en el nodo
+        this.hudTexto.textContent = texto;
+    }
+
+    iniciar() {
+        // Guardamos la referencia temporal inicial
+        this.ultimoTiempo = performance.now();
+        // Arrancamos el Game Loop
+        requestAnimationFrame((t) => this.buclePrincipal(t));
+    }
+
+    buclePrincipal(tiempoActual) {
+        // 1. Calcular Delta Time (en segundos)
+        const dt = (tiempoActual - this.ultimoTiempo) / 1000;
+        this.ultimoTiempo = tiempoActual;
+
+        // 2. Limpiar Pantalla
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Dibujar un suelo simple
+        this.ctx.fillStyle = "#d8e2dc";
+        this.ctx.fillRect(0, this.canvas.height - 40, this.canvas.width, 40);
+
+        // 3. Actualizar y Dibujar entidades
+        this.entidades.forEach(entidad => {
+            if (entidad.activa) {
+                entidad.actualizar(dt);
+                entidad.dibujar(this.ctx);
+            }
+        });
+
+        // 4. Gestión de Memoria (Limpiar entidades inactivas)
+        // Filtramos el arreglo quedándonos solo con las activas
+        this.entidades = this.entidades.filter(entidad => entidad.activa);
+
+        // 5. Llamada recursiva sincronizada con el monitor
+        requestAnimationFrame((t) => this.buclePrincipal(t));
+    }
+}
+
+// ============================================
+// CONTROLADOR (Pegamento entre UI y Dominio)
+// ============================================
+class ControladorJuego {
+    constructor() {
+        // Inicializar motor
+        this.motor = new MotorJuego(700, 300);
+        
+        // Inicializar dominio (Catálogo de armas)
+        this.inventario = [
+            new Arma("Pistola Láser", 10, "#ef233c", 400, 1),
+            new Arma("Cañón de Plasma", 30, "#06d6a0", 250, 2),
+            new Arma("Rifle Francotirador", 50, "#118ab2", 900, 0.8)
+        ];
+        this.indiceArma = 0;
+
+        // Crear al protagonista y agregarlo al motor
+        this.jugador = new Personaje("Héroe", 50, 180, this.inventario[this.indiceArma]);
+        this.motor.agregarEntidad(this.jugador);
+
+        this.vincularEventos();
+        this.actualizarUI();
+    }
+
+    vincularEventos() {
+        // Patrón Observer básico: el controlador escucha el DOM y actúa sobre el Dominio
+        this.motor.btnAtacar.addEventListener('click', () => {
+            // El jugador ataca y nos devuelve un proyectil
+            const nuevoProyectil = this.jugador.atacar();
+            // Le pasamos el proyectil al motor para que lo simule y dibuje
+            this.motor.agregarEntidad(nuevoProyectil);
+        });
+
+        this.motor.btnCambiarArma.addEventListener('click', () => {
+            this.indiceArma = (this.indiceArma + 1) % this.inventario.length;
+            const nuevaArma = this.inventario[this.indiceArma];
+            this.jugador.cambiarArma(nuevaArma);
+            this.actualizarUI();
+        });
+    }
+
+    actualizarUI() {
+        this.motor.actualizarHUD(`Arma actual: ${this.jugador.arma.obtenerNombre()} | Entidades activas procesadas dinámicamente.`);
+    }
+}
+
+// Iniciar la aplicación
+const app = new ControladorJuego();
+
+</script>
+</body>
+</html>
